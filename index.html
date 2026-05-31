@@ -1,0 +1,152 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Hyperbolic Monitor</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: #0a0a10; color: #e0e0f0; font-family: 'Courier New', monospace; padding: 20px; }
+  .hdr { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; padding-bottom: 16px; border-bottom: 1px solid #1a1a2e; }
+  .title { font-size: 22px; font-weight: 700; letter-spacing: 2px; color: #fff; }
+  .sub { font-size: 10px; letter-spacing: 3px; color: #00e5a0; margin-bottom: 4px; }
+  .btn { background: rgba(0,229,160,0.1); border: 1px solid rgba(0,229,160,0.3); color: #00e5a0; padding: 8px 16px; border-radius: 4px; cursor: pointer; font-size: 12px; letter-spacing: 1px; }
+  .btn:hover { background: rgba(0,229,160,0.2); }
+  .kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 12px; margin-bottom: 20px; }
+  .kpi { background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.07); border-radius: 8px; padding: 16px; }
+  .kl { font-size: 9px; letter-spacing: 3px; color: #555; margin-bottom: 8px; }
+  .kv { font-size: 24px; font-weight: 700; }
+  .tabs { display: flex; border-bottom: 1px solid #1a1a2e; margin-bottom: 16px; }
+  .tab { background: none; border: none; border-bottom: 2px solid transparent; color: #555; font-size: 10px; letter-spacing: 3px; padding: 10px 16px; cursor: pointer; font-family: 'Courier New', monospace; }
+  .tab.on { color: #00e5a0; border-bottom-color: #00e5a0; }
+  .cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 12px; }
+  .card { background: rgba(255,255,255,0.02); border: 1px solid #1a2a1a; border-radius: 8px; padding: 16px; }
+  .card.anom { border-color: #ff4d6d; background: rgba(255,77,109,0.05); }
+  .cn { font-size: 15px; font-weight: 700; color: #fff; margin-bottom: 2px; }
+  .cu { font-size: 10px; color: #444; letter-spacing: 2px; margin-bottom: 12px; }
+  .rw { display: flex; justify-content: space-between; font-size: 12px; margin-bottom: 5px; }
+  .rl { color: #555; }
+  .rv { font-weight: 600; color: #aaa; }
+  .badge { display: inline-block; font-size: 9px; padding: 3px 8px; border-radius: 4px; margin-top: 8px; letter-spacing: 1px; font-weight: 700; }
+  .b-ok { background: rgba(0,229,160,0.15); color: #00e5a0; }
+  .b-no { background: rgba(255,255,255,0.05); color: #444; }
+  .b-err { background: rgba(255,77,109,0.15); color: #ff4d6d; margin-left: 6px; }
+  .tbl { border: 1px solid #1a1a2e; border-radius: 8px; overflow: hidden; }
+  .tr { display: grid; grid-template-columns: 1.2fr 1fr 0.6fr 0.6fr 1fr 1fr; font-size: 11px; padding: 9px 14px; border-bottom: 1px solid #111; align-items: center; }
+  .tr.hd { background: rgba(0,229,160,0.05); color: #00e5a0; font-size: 9px; letter-spacing: 2px; }
+  .tr.an { background: rgba(255,77,109,0.05); }
+  .err { background: rgba(255,77,109,0.1); border: 1px solid rgba(255,77,109,0.3); border-left: 4px solid #ff4d6d; border-radius: 6px; padding: 10px 16px; font-size: 12px; color: #ff4d6d; margin-bottom: 16px; display: none; }
+  .ts { font-size: 10px; color: #444; letter-spacing: 1px; }
+  .empty { color: #333; font-size: 12px; padding: 40px; text-align: center; letter-spacing: 2px; }
+  .green { color: #00e5a0; } .orange { color: #f5a623; } .red { color: #ff4d6d; }
+</style>
+</head>
+<body>
+
+<div class="hdr">
+  <div>
+    <div class="sub">HYPERBOLIC GLOBAL</div>
+    <div class="title">Monitor</div>
+  </div>
+  <div style="display:flex;gap:10px;align-items:center">
+    <span class="ts" id="ts">—</span>
+    <button class="btn" onclick="load()">↻ Refresh</button>
+  </div>
+</div>
+
+<div class="err" id="err"></div>
+
+<div class="kpis">
+  <div class="kpi"><div class="kl">ACTIVE IDs</div><div class="kv green" id="k0">—</div></div>
+  <div class="kpi"><div class="kl">TOTAL EARNED</div><div class="kv green" id="k1">—</div></div>
+  <div class="kpi"><div class="kl">TODAY'S RENT</div><div class="kv orange" id="k2">—</div></div>
+  <div class="kpi"><div class="kl">ANOMALIES</div><div class="kv" id="k3" style="color:#444">—</div></div>
+</div>
+
+<div class="tabs">
+  <button class="tab on" onclick="tab('ov',this)">OVERVIEW</button>
+  <button class="tab" onclick="tab('lg',this)">LOG</button>
+  <button class="tab" onclick="tab('an',this)">ANOMALIES</button>
+</div>
+
+<div id="ov"></div>
+<div id="lg" style="display:none"></div>
+<div id="an" style="display:none"></div>
+
+<script>
+const API = 'https://script.google.com/macros/s/AKfycbwhLJ1F6LNSfhrFKlww_ksXWxoqcyJ7nxnVfW7Oa-AIogE7rcNEGI1MrPIidInwp-I0/exec';
+
+function tab(id,btn){
+  ['ov','lg','an'].forEach(t=>document.getElementById(t).style.display=t===id?'':'none');
+  document.querySelectorAll('.tab').forEach(b=>b.classList.remove('on'));
+  btn.classList.add('on');
+}
+function pa(v){const n=parseFloat(String(v||'').replace(/[^0-9.]/g,''));return isNaN(n)?0:n;}
+function fmt(v){return(!v||v==='-')?'—':v;}
+function ago(s){
+  if(!s)return'never';const d=new Date(s);if(isNaN(d))return s;
+  const m=Math.floor((Date.now()-d)/60000);
+  return m<1?'just now':m<60?m+'m ago':m<1440?Math.floor(m/60)+'h ago':Math.floor(m/1440)+'d ago';
+}
+
+async function load(){
+  document.getElementById('ts').textContent='Loading...';
+  document.getElementById('err').style.display='none';
+  try{
+    const res=await fetch(API);
+    const data=await res.json();
+    render(data);
+    document.getElementById('ts').textContent='Updated '+new Date().toLocaleTimeString();
+  }catch(e){
+    document.getElementById('err').style.display='';
+    document.getElementById('err').textContent='Error: '+e.message;
+    document.getElementById('ts').textContent='Failed';
+  }
+}
+
+function render(data){
+  const users=data.users||[],earnings=data.earnings||[],anomalies=data.anomalies||[];
+  const active=users.filter(u=>String(u.active).toLowerCase()==='yes').length;
+  const total=users.reduce((s,u)=>s+pa(u.lastTotal),0);
+  const today=new Date().toISOString().slice(0,10);
+  const todayR=earnings.filter(e=>String(e.date).startsWith(today)).reduce((s,e)=>s+pa(e.dailyRent),0);
+
+  document.getElementById('k0').textContent=active+' / '+users.length;
+  document.getElementById('k1').textContent=total.toFixed(2);
+  document.getElementById('k2').textContent=todayR.toFixed(2);
+  const ka=document.getElementById('k3');
+  ka.textContent=anomalies.length;
+  ka.style.color=anomalies.length>0?'#ff4d6d':'#444';
+
+  document.getElementById('ov').innerHTML=users.length?'<div class="cards">'+users.map(u=>{
+    const isA=String(u.active).toLowerCase()==='yes';
+    const ll=[...earnings].reverse().find(e=>e.username===u.username);
+    const ha=ll?.anomaly==='Yes';
+    return`<div class="card ${ha?'anom':''}">
+      <div class="cn">${u.name}</div><div class="cu">${u.username}</div>
+      <div class="rw"><span class="rl">Total earned</span><span class="rv green">${fmt(u.lastTotal)}</span></div>
+      <div class="rw"><span class="rl">Daily rent</span><span class="rv orange">${fmt(u.lastDailyRent)}</span></div>
+      <div class="rw"><span class="rl">Scheduled</span><span class="rv">${u.scheduledTime||'—'} IST</span></div>
+      <div class="rw"><span class="rl">Last run</span><span class="rv">${u.lastRun?ago(u.lastRun):'—'}</span></div>
+      ${ll?`<div class="rw"><span class="rl">Deploy</span><span class="rv">${ll.deployStatus?.includes('✅')?'✅':'❌'}</span></div>
+      <div class="rw"><span class="rl">Rent</span><span class="rv">${ll.rentStatus?.includes('✅')?'✅':'❌'}</span></div>`:''}
+      <span class="badge ${isA?'b-ok':'b-no'}">${isA?'ACTIVE':'INACTIVE'}</span>
+      ${ha?'<span class="badge b-err">ANOMALY</span>':''}
+    </div>`;
+  }).join('')+'</div>':'<div class="empty">No accounts found</div>';
+
+  const rec=[...earnings].reverse().slice(0,50);
+  document.getElementById('lg').innerHTML=rec.length?'<div class="tbl"><div class="tr hd"><span>NAME</span><span>DATE</span><span>DEPLOY</span><span>RENT</span><span>TOTAL</span><span>DAILY</span></div>'
+    +rec.map(e=>`<div class="tr ${e.anomaly==='Yes'?'an':''}"><span>${e.name}</span><span>${String(e.date).slice(0,10)}</span><span>${e.deployStatus?.includes('✅')?'✅':'❌'}</span><span>${e.rentStatus?.includes('✅')?'✅':'❌'}</span><span class="green">${fmt(e.totalEarnings)}</span><span class="orange">${fmt(e.dailyRent)}</span></div>`).join('')+'</div>'
+    :'<div class="empty">No earnings yet</div>';
+
+  document.getElementById('an').innerHTML=anomalies.length?'<div class="tbl"><div class="tr hd"><span>NAME</span><span>DATE</span><span>DEPLOY</span><span>RENT</span><span>TOTAL</span><span>NOTES</span></div>'
+    +[...anomalies].reverse().map(a=>`<div class="tr an"><span>${a.name}</span><span>${String(a.date).slice(0,10)}</span><span>${a.deployStatus?.includes('✅')?'✅':'❌'}</span><span>${a.rentStatus?.includes('✅')?'✅':'❌'}</span><span class="green">${fmt(a.totalEarnings)}</span><span style="font-size:10px;color:#ff4d6d">${a.notes||'—'}</span></div>`).join('')+'</div>'
+    :'<div class="empty">No anomalies ✓</div>';
+}
+
+load();
+setInterval(load,5*60*1000);
+</script>
+</body>
+</html>
