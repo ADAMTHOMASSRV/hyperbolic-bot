@@ -2,9 +2,10 @@ const puppeteer = require('puppeteer');
 const { google } = require('googleapis');
 const schedule = require('node-schedule');
 
-// ── Google Sheets Auth (credentials from env var) ────────────────
 const SHEET_ID = process.env.SHEET_ID;
+const LOGIN_URL = 'https://hyperbolicglobal.com/login';
 
+// ── Google Sheets Auth ───────────────────────────────────────────
 async function getSheetsClient() {
   const credentials = JSON.parse(process.env.GOOGLE_CREDENTIALS);
   const auth = new google.auth.GoogleAuth({
@@ -14,7 +15,7 @@ async function getSheetsClient() {
   return google.sheets({ version: 'v4', auth });
 }
 
-// ── Read Users from Sheet ────────────────────────────────────────
+// ── Read Users ───────────────────────────────────────────────────
 async function getUsers(sheets) {
   const res = await sheets.spreadsheets.values.get({
     spreadsheetId: SHEET_ID,
@@ -33,7 +34,7 @@ async function getUsers(sheets) {
     }));
 }
 
-// ── Log Result to Sheet ──────────────────────────────────────────
+// ── Log Result ───────────────────────────────────────────────────
 async function logResult(sheets, data) {
   await sheets.spreadsheets.values.append({
     spreadsheetId: SHEET_ID,
@@ -41,17 +42,10 @@ async function logResult(sheets, data) {
     valueInputOption: 'USER_ENTERED',
     requestBody: {
       values: [[
-        '',
-        data.name,
-        data.username,
-        data.date,
-        data.time,
-        data.deployStatus,
-        data.rentStatus,
-        data.totalEarnings,
-        data.dailyRent,
-        data.anomaly,
-        data.notes,
+        '', data.name, data.username, data.date, data.time,
+        data.deployStatus, data.rentStatus,
+        data.totalEarnings, data.dailyRent,
+        data.anomaly, data.notes,
       ]],
     },
   });
@@ -63,22 +57,16 @@ async function logResult(sheets, data) {
       valueInputOption: 'USER_ENTERED',
       requestBody: {
         values: [[
-          '',
-          data.name,
-          data.username,
-          data.date,
-          data.time,
-          data.deployStatus,
-          data.rentStatus,
-          data.totalEarnings,
-          data.dailyRent,
-          data.anomaly,
-          data.notes,
+          '', data.name, data.username, data.date, data.time,
+          data.deployStatus, data.rentStatus,
+          data.totalEarnings, data.dailyRent,
+          data.anomaly, data.notes,
         ]],
       },
     });
   }
 
+  // Update Users tab Last Run, Last Total, Last Daily Rent
   const usersRes = await sheets.spreadsheets.values.get({
     spreadsheetId: SHEET_ID,
     range: 'Users!C3:C50',
@@ -98,66 +86,47 @@ async function logResult(sheets, data) {
   }
 }
 
-// ── Click Button with Retry ──────────────────────────────────────
-async function clickButtonWithRetry(page, buttonText, maxAttempts = 5, delayMs = 120000) {
-  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-    console.log(`  [${buttonText}] Attempt ${attempt}/${maxAttempts}`);
-    try {
-      const found = await page.evaluate((text) => {
-        const elements = Array.from(document.querySelectorAll('button, a, span, div'));
-        const match = elements.find(el => el.innerText && el.innerText.trim() === text);
-        if (match) { match.click(); return true; }
-        return false;
-      }, buttonText);
-
-      if (found) {
-        console.log(`  [${buttonText}] Clicked on attempt ${attempt}`);
-        await new Promise(r => setTimeout(r, 3000));
-        return { success: true, attempts: attempt };
-      }
-    } catch (err) {
-      console.log(`  [${buttonText}] Error: ${err.message}`);
-    }
-    if (attempt < maxAttempts) {
-      console.log(`  [${buttonText}] Waiting 2 min before retry...`);
-      await new Promise(r => setTimeout(r, delayMs));
-    }
-  }
-  return { success: false, attempts: maxAttempts };
-}
-
-// ── Scrape Earnings with Retry ───────────────────────────────────
-async function scrapeEarningsWithRetry(page, maxAttempts = 5, delayMs = 120000) {
-  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-    console.log(`  [Earnings] Attempt ${attempt}/${maxAttempts}`);
-    try {
-      const earnings = await page.evaluate(() => {
-        const cards = Array.from(document.querySelectorAll('*'));
-        let totalEarnings = null;
-        let dailyRent = null;
-        for (const el of cards) {
-          const text = el.innerText || '';
-          if (text.includes('Total Earnings')) {
-            const next = el.nextElementSibling || el.querySelector('*');
-            if (next) totalEarnings = next.innerText.trim();
+// ── Scrape a value by label ──────────────────────────────────────
+async function scrapeByLabel(page, label) {
+  return await page.evaluate((lbl) => {
+    const all = Array.from(document.querySelectorAll('*'));
+    for (const el of all) {
+      const txt = el.innerText?.trim();
+      if (txt === lbl) {
+        // Look at siblings and parent children for the value
+        const parent = el.parentElement;
+        if (parent) {
+          const children = Array.from(parent.children);
+          for (const child of children) {
+            const val = child.innerText?.trim();
+            if (val && val !== lbl && val.match(/[0-9]/)) return val;
           }
-          if (text.includes('Daily GPUaaS Rent')) {
-            const next = el.nextElementSibling || el.querySelector('*');
-            if (next) dailyRent = next.innerText.trim();
+          // Try parent's parent
+          const grandParent = parent.parentElement;
+          if (grandParent) {
+            const vals = grandParent.innerText.split('\n').map(s => s.trim()).filter(s => s.match(/[¥$₹0-9]/));
+            if (vals.length) return vals[0];
           }
         }
-        return { totalEarnings, dailyRent };
-      });
-
-      if (earnings.totalEarnings || earnings.dailyRent) {
-        return { success: true, ...earnings };
       }
-    } catch (err) {
-      console.log(`  [Earnings] Error: ${err.message}`);
     }
-    if (attempt < maxAttempts) await new Promise(r => setTimeout(r, delayMs));
-  }
-  return { success: false, totalEarnings: '-', dailyRent: '-' };
+    return null;
+  }, label);
+}
+
+// ── Click button by partial text ─────────────────────────────────
+async function clickButton(page, texts) {
+  return await page.evaluate((textList) => {
+    const els = Array.from(document.querySelectorAll('button, a, div, span'));
+    for (const text of textList) {
+      const match = els.find(el => el.innerText?.trim().toLowerCase().includes(text.toLowerCase()));
+      if (match) {
+        match.click();
+        return { found: true, text };
+      }
+    }
+    return { found: false };
+  }, texts);
 }
 
 // ── Run Bot for One User ─────────────────────────────────────────
@@ -168,78 +137,130 @@ async function runForUser(user) {
   const time = now.toTimeString().slice(0, 5);
 
   const result = {
-    name: user.name,
-    username: user.username,
+    name: user.name, username: user.username,
     date, time,
-    deployStatus: 'Not Required',
-    rentStatus: 'Not Required',
-    totalEarnings: '-',
-    dailyRent: '-',
-    anomaly: 'No',
-    notes: '',
+    deployStatus: 'N/A',
+    rentStatus: 'N/A',
+    totalEarnings: '-', dailyRent: '-',
+    anomaly: 'No', notes: '',
   };
 
   const browser = await puppeteer.launch({
-    headless: true,
+    headless: 'new',
     executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || '/usr/bin/chromium',
     args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage'],
   });
 
   try {
     const page = await browser.newPage();
-    await page.setViewport({ width: 1280, height: 800 });
+    await page.setViewport({ width: 1280, height: 900 });
 
-    console.log(`  Logging in...`);
-    await page.goto('https://hyperbolicglobal.com/admin', { waitUntil: 'networkidle2', timeout: 30000 });
+    // ── Login ──────────────────────────────────────────────────
+    console.log(`  Logging in to ${LOGIN_URL}...`);
+    await page.goto(LOGIN_URL, { waitUntil: 'networkidle2', timeout: 30000 });
+    await new Promise(r => setTimeout(r, 2000));
 
+    // Fill ID NO. field
     await page.evaluate((username, password) => {
       const inputs = Array.from(document.querySelectorAll('input'));
-      const userField = inputs.find(i => i.type === 'text' || i.name?.toLowerCase().includes('user') || i.placeholder?.toLowerCase().includes('user') || i.placeholder?.toLowerCase().includes('id'));
+      const idField = inputs.find(i =>
+        i.placeholder?.toLowerCase().includes('id') ||
+        i.name?.toLowerCase().includes('id') ||
+        i.type === 'text'
+      );
       const passField = inputs.find(i => i.type === 'password');
-      if (userField) userField.value = username;
-      if (passField) passField.value = password;
+      if (idField) { idField.focus(); idField.value = username; idField.dispatchEvent(new Event('input', {bubbles:true})); }
+      if (passField) { passField.focus(); passField.value = password; passField.dispatchEvent(new Event('input', {bubbles:true})); }
     }, user.username, user.password);
 
+    await new Promise(r => setTimeout(r, 1000));
+
+    // Click Log In button
     await page.evaluate(() => {
       const btns = Array.from(document.querySelectorAll('button, input[type="submit"]'));
-      const loginBtn = btns.find(b => /login|sign in|submit/i.test(b.innerText || b.value || ''));
+      const loginBtn = btns.find(b => /log\s*in|sign\s*in|submit/i.test(b.innerText || b.value || ''));
       if (loginBtn) loginBtn.click();
     });
 
-    await page.waitForNavigation({ waitUntil: 'networkidle2', timeout: 15000 }).catch(() => {});
+    await page.waitForNavigation({ waitUntil: 'networkidle2', timeout: 20000 }).catch(() => {});
     await new Promise(r => setTimeout(r, 3000));
-    console.log(`  Logged in`);
 
-    const deployResult = await clickButtonWithRetry(page, 'Deploy');
-    result.deployStatus = deployResult.success
-      ? `✅ Success (attempt ${deployResult.attempts})`
-      : '❌ Deploy Failed';
-    if (!deployResult.success) { result.anomaly = 'Yes'; result.notes += 'Deploy failed. '; }
+    const url = page.url();
+    console.log(`  After login URL: ${url}`);
 
-    const rentResult = await clickButtonWithRetry(page, 'Get Rent');
-    result.rentStatus = rentResult.success
-      ? `✅ Success (attempt ${rentResult.attempts})`
-      : '❌ Rent Failed';
-    if (!rentResult.success) { result.anomaly = 'Yes'; result.notes += 'Get Rent failed. '; }
+    if (url.includes('login')) {
+      throw new Error('Login failed — still on login page');
+    }
+    console.log(`  Logged in successfully`);
 
-    const earningsResult = await scrapeEarningsWithRetry(page);
-    if (earningsResult.success) {
-      result.totalEarnings = earningsResult.totalEarnings;
-      result.dailyRent = earningsResult.dailyRent;
+    // ── Try clicking rent-related buttons ─────────────────────
+    // Look for any button that might collect rent
+    const rentClicked = await clickButton(page, [
+      'Get Rent', 'Collect Rent', 'Claim Rent', 'Claim', 'Collect',
+      'Get Daily Rent', 'Receive Rent', 'Deploy', 'Start', 'Run'
+    ]);
+    
+    if (rentClicked.found) {
+      console.log(`  Clicked: ${rentClicked.text}`);
+      result.rentStatus = `✅ Clicked ${rentClicked.text}`;
+      await new Promise(r => setTimeout(r, 3000));
     } else {
+      console.log(`  No rent button found — scraping values only`);
+      result.rentStatus = 'No button found';
+      result.deployStatus = 'No button found';
+    }
+
+    // ── Scrape all visible values ──────────────────────────────
+    await new Promise(r => setTimeout(r, 2000));
+
+    const labels = [
+      'Total Earnings', 'Daily GPUaaS Rent', 'Total Daily Rent',
+      'Income Wallet', 'GPUaaS', 'Account Balance'
+    ];
+
+    const scraped = {};
+    for (const label of labels) {
+      const val = await scrapeByLabel(page, label);
+      if (val) {
+        scraped[label] = val;
+        console.log(`  ${label}: ${val}`);
+      }
+    }
+
+    // Also grab ALL text with ¥ symbol as fallback
+    const allValues = await page.evaluate(() => {
+      const all = Array.from(document.querySelectorAll('*'));
+      const found = [];
+      for (const el of all) {
+        if (el.children.length === 0) {
+          const txt = el.innerText?.trim();
+          if (txt && txt.includes('¥')) found.push(txt);
+        }
+      }
+      return [...new Set(found)];
+    });
+    console.log(`  All ¥ values on page: ${allValues.join(' | ')}`);
+
+    result.totalEarnings = scraped['Total Earnings'] || scraped['Income Wallet'] || allValues[0] || '-';
+    result.dailyRent = scraped['Daily GPUaaS Rent'] || scraped['Total Daily Rent'] || allValues[1] || '-';
+    result.deployStatus = result.deployStatus === 'N/A' ? '✅ Logged in' : result.deployStatus;
+
+    if (result.totalEarnings === '-' && result.dailyRent === '-') {
       result.anomaly = 'Yes';
-      result.notes += 'Earnings scrape failed.';
+      result.notes = 'Could not scrape values';
     }
 
   } catch (err) {
-    console.error(`  Fatal: ${err.message}`);
+    console.error(`  Error: ${err.message}`);
     result.anomaly = 'Yes';
-    result.notes += `Fatal: ${err.message}`;
+    result.notes = err.message;
+    result.deployStatus = '❌ Error';
+    result.rentStatus = '❌ Error';
   } finally {
     await browser.close();
   }
 
-  console.log(`  Done: Deploy=${result.deployStatus}, Rent=${result.rentStatus}, Earnings=${result.totalEarnings}`);
+  console.log(`  Result: Total=${result.totalEarnings} Daily=${result.dailyRent}`);
   return result;
 }
 
@@ -252,32 +273,31 @@ async function scheduleUsers() {
   const timeGroups = {};
   for (const user of users) {
     if (!user.time) continue;
-    if (!timeGroups[user.time]) timeGroups[user.time] = [];
-    timeGroups[user.time].push(user);
+    const timeStr = typeof user.time === 'string' ? user.time :
+      new Date(user.time).toTimeString().slice(0, 5);
+    if (!timeGroups[timeStr]) timeGroups[timeStr] = [];
+    timeGroups[timeStr].push(user);
   }
 
   for (const [time, groupUsers] of Object.entries(timeGroups)) {
     const [hour, minute] = time.split(':').map(Number);
     groupUsers.forEach((user, index) => {
       const staggerSeconds = index * 60;
-      const staggeredMinute = minute + Math.floor(staggerSeconds / 60);
-      const staggeredSecond = staggerSeconds % 60;
-
-      // Convert IST to UTC
-      let utcHour = hour;
-      let utcMinute = staggeredMinute - 30;
+      let utcMinute = minute + Math.floor(staggerSeconds / 60) - 30;
+      let utcHour = hour - 5;
       if (utcMinute < 0) { utcMinute += 60; utcHour -= 1; }
-      utcHour -= 5;
+      if (utcMinute >= 60) { utcMinute -= 60; utcHour += 1; }
       if (utcHour < 0) utcHour += 24;
+      if (utcHour >= 24) utcHour -= 24;
 
-      const cronExp = `${staggeredSecond} ${utcMinute} ${utcHour} * * *`;
+      const cronExp = `${staggerSeconds % 60} ${utcMinute} ${utcHour} * * *`;
       console.log(`Scheduled ${user.name} at IST ${time} → cron: ${cronExp}`);
 
       schedule.scheduleJob(cronExp, async () => {
         const freshSheets = await getSheetsClient();
         const freshUsers = await getUsers(freshSheets);
         const freshUser = freshUsers.find(u => u.username === user.username);
-        if (!freshUser) { console.log(`${user.username} no longer active — skipping`); return; }
+        if (!freshUser) { console.log(`${user.username} inactive — skipping`); return; }
         const result = await runForUser(freshUser);
         await logResult(freshSheets, result);
       });
@@ -293,6 +313,7 @@ scheduleUsers().catch(console.error);
 // Refresh schedule daily at midnight IST (18:30 UTC)
 schedule.scheduleJob('0 30 18 * * *', async () => {
   console.log('Midnight IST — refreshing schedule...');
-  Object.values(schedule.scheduledJobs).forEach(job => job.cancel());
+  const jobs = schedule.scheduledJobs;
+  Object.keys(jobs).forEach(k => jobs[k].cancel());
   await scheduleUsers();
 });
