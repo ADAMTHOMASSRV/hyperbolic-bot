@@ -86,14 +86,13 @@ async function logResult(sheets, data) {
   }
 }
 
-// ── Scrape a value by label ──────────────────────────────────────
+// ── Scrape value by label ────────────────────────────────────────
 async function scrapeByLabel(page, label) {
   return await page.evaluate((lbl) => {
     const all = Array.from(document.querySelectorAll('*'));
     for (const el of all) {
       const txt = el.innerText?.trim();
       if (txt === lbl) {
-        // Look at siblings and parent children for the value
         const parent = el.parentElement;
         if (parent) {
           const children = Array.from(parent.children);
@@ -101,7 +100,6 @@ async function scrapeByLabel(page, label) {
             const val = child.innerText?.trim();
             if (val && val !== lbl && val.match(/[0-9]/)) return val;
           }
-          // Try parent's parent
           const grandParent = parent.parentElement;
           if (grandParent) {
             const vals = grandParent.innerText.split('\n').map(s => s.trim()).filter(s => s.match(/[¥$₹0-9]/));
@@ -120,10 +118,7 @@ async function clickButton(page, texts) {
     const els = Array.from(document.querySelectorAll('button, a, div, span'));
     for (const text of textList) {
       const match = els.find(el => el.innerText?.trim().toLowerCase().includes(text.toLowerCase()));
-      if (match) {
-        match.click();
-        return { found: true, text };
-      }
+      if (match) { match.click(); return { found: true, text }; }
     }
     return { found: false };
   }, texts);
@@ -155,33 +150,44 @@ async function runForUser(user) {
     const page = await browser.newPage();
     await page.setViewport({ width: 1280, height: 900 });
 
-    // ── Login ──────────────────────────────────────────────────
-    console.log(`  Logging in to ${LOGIN_URL}...`);
+    // ── Login ────────────────────────────────────────────────────
+    console.log(`  Navigating to login page...`);
     await page.goto(LOGIN_URL, { waitUntil: 'networkidle2', timeout: 30000 });
     await new Promise(r => setTimeout(r, 2000));
 
-    // Fill ID NO. field
-    await page.evaluate((username, password) => {
-      const inputs = Array.from(document.querySelectorAll('input'));
-      const idField = inputs.find(i =>
-        i.placeholder?.toLowerCase().includes('id') ||
-        i.name?.toLowerCase().includes('id') ||
-        i.type === 'text'
-      );
-      const passField = inputs.find(i => i.type === 'password');
-      if (idField) { idField.focus(); idField.value = username; idField.dispatchEvent(new Event('input', {bubbles:true})); }
-      if (passField) { passField.focus(); passField.value = password; passField.dispatchEvent(new Event('input', {bubbles:true})); }
-    }, user.username, user.password);
+    // Type ID using keyboard simulation (handles special chars like @)
+    const idField = await page.$('input[type="text"], input[placeholder*="ID"], input[placeholder*="id"], input[placeholder*="Id"]');
+    const passField = await page.$('input[type="password"]');
 
-    await new Promise(r => setTimeout(r, 1000));
+    if (idField) {
+      await idField.click({ clickCount: 3 });
+      await idField.type(user.username, { delay: 50 });
+      console.log(`  Typed username: ${user.username}`);
+    } else {
+      console.log(`  WARNING: ID field not found`);
+    }
 
-    // Click Log In button
-    await page.evaluate(() => {
+    if (passField) {
+      await passField.click({ clickCount: 3 });
+      await passField.type(user.password, { delay: 50 });
+      console.log(`  Typed password`);
+    } else {
+      console.log(`  WARNING: Password field not found`);
+    }
+
+    await new Promise(r => setTimeout(r, 500));
+
+    // Click login button
+    const loginClicked = await page.evaluate(() => {
       const btns = Array.from(document.querySelectorAll('button, input[type="submit"]'));
-      const loginBtn = btns.find(b => /log\s*in|sign\s*in|submit/i.test(b.innerText || b.value || ''));
-      if (loginBtn) loginBtn.click();
+      const btn = btns.find(b => /log\s*in|sign\s*in|submit/i.test(b.innerText || b.value || ''));
+      if (btn) { btn.click(); return true; }
+      // fallback — click first button
+      if (btns[0]) { btns[0].click(); return true; }
+      return false;
     });
 
+    console.log(`  Login button clicked: ${loginClicked}`);
     await page.waitForNavigation({ waitUntil: 'networkidle2', timeout: 20000 }).catch(() => {});
     await new Promise(r => setTimeout(r, 3000));
 
@@ -192,30 +198,29 @@ async function runForUser(user) {
       throw new Error('Login failed — still on login page');
     }
     console.log(`  Logged in successfully`);
+    result.deployStatus = '✅ Logged in';
 
-    // ── Try clicking rent-related buttons ─────────────────────
-    // Look for any button that might collect rent
+    // ── Try clicking rent/claim buttons ─────────────────────────
     const rentClicked = await clickButton(page, [
-      'Get Rent', 'Collect Rent', 'Claim Rent', 'Claim', 'Collect',
-      'Get Daily Rent', 'Receive Rent', 'Deploy', 'Start', 'Run'
+      'Get Rent', 'Collect Rent', 'Claim Rent', 'Claim',
+      'Collect', 'Get Daily Rent', 'Receive Rent', 'Rent Now'
     ]);
-    
+
     if (rentClicked.found) {
-      console.log(`  Clicked: ${rentClicked.text}`);
+      console.log(`  Clicked rent button: ${rentClicked.text}`);
       result.rentStatus = `✅ Clicked ${rentClicked.text}`;
       await new Promise(r => setTimeout(r, 3000));
     } else {
-      console.log(`  No rent button found — scraping values only`);
-      result.rentStatus = 'No button found';
-      result.deployStatus = 'No button found';
+      console.log(`  No rent button found — values only`);
+      result.rentStatus = 'No button';
     }
 
-    // ── Scrape all visible values ──────────────────────────────
+    // ── Scrape values ────────────────────────────────────────────
     await new Promise(r => setTimeout(r, 2000));
 
     const labels = [
       'Total Earnings', 'Daily GPUaaS Rent', 'Total Daily Rent',
-      'Income Wallet', 'GPUaaS', 'Account Balance'
+      'Income Wallet', 'GPUaaS'
     ];
 
     const scraped = {};
@@ -227,7 +232,7 @@ async function runForUser(user) {
       }
     }
 
-    // Also grab ALL text with ¥ symbol as fallback
+    // Fallback — grab all ¥ values
     const allValues = await page.evaluate(() => {
       const all = Array.from(document.querySelectorAll('*'));
       const found = [];
@@ -239,11 +244,10 @@ async function runForUser(user) {
       }
       return [...new Set(found)];
     });
-    console.log(`  All ¥ values on page: ${allValues.join(' | ')}`);
+    console.log(`  All ¥ values: ${allValues.join(' | ')}`);
 
     result.totalEarnings = scraped['Total Earnings'] || scraped['Income Wallet'] || allValues[0] || '-';
     result.dailyRent = scraped['Daily GPUaaS Rent'] || scraped['Total Daily Rent'] || allValues[1] || '-';
-    result.deployStatus = result.deployStatus === 'N/A' ? '✅ Logged in' : result.deployStatus;
 
     if (result.totalEarnings === '-' && result.dailyRent === '-') {
       result.anomaly = 'Yes';
