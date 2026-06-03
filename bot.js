@@ -3,7 +3,7 @@ const { google } = require('googleapis');
 const schedule = require('node-schedule');
 
 const SHEET_ID = process.env.SHEET_ID;
-const LOGIN_URL = 'https://hyperbolicglobal.com/login';
+const LOGIN_URL = 'https://hyperbolicglobal.com/signin';
 
 // ── Google Sheets Auth ───────────────────────────────────────────
 async function getSheetsClient() {
