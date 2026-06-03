@@ -151,12 +151,12 @@ async function runForUser(user) {
     await page.setViewport({ width: 1280, height: 900 });
 
     // ── Login ────────────────────────────────────────────────────
-    console.log(`  Navigating to login page...`);
+    console.log(`  Navigating to signin page...`);
     await page.goto(LOGIN_URL, { waitUntil: 'networkidle2', timeout: 30000 });
     await new Promise(r => setTimeout(r, 2000));
 
-    // Type ID using keyboard simulation (handles special chars like @)
-    const idField = await page.$('input[type="text"], input[placeholder*="ID"], input[placeholder*="id"], input[placeholder*="Id"]');
+    // Type credentials using keyboard simulation
+    const idField = await page.$('input:not([type="password"])');
     const passField = await page.$('input[type="password"]');
 
     if (idField) {
@@ -182,7 +182,6 @@ async function runForUser(user) {
       const btns = Array.from(document.querySelectorAll('button, input[type="submit"]'));
       const btn = btns.find(b => /log\s*in|sign\s*in|submit/i.test(b.innerText || b.value || ''));
       if (btn) { btn.click(); return true; }
-      // fallback — click first button
       if (btns[0]) { btns[0].click(); return true; }
       return false;
     });
@@ -194,8 +193,8 @@ async function runForUser(user) {
     const url = page.url();
     console.log(`  After login URL: ${url}`);
 
-    if (url.includes('login')) {
-      throw new Error('Login failed — still on login page');
+    if (url.includes('signin')) {
+      throw new Error('Login failed — still on signin page');
     }
     console.log(`  Logged in successfully`);
     result.deployStatus = '✅ Logged in';
@@ -321,3 +320,13 @@ schedule.scheduleJob('0 30 18 * * *', async () => {
   Object.keys(jobs).forEach(k => jobs[k].cancel());
   await scheduleUsers();
 });
+
+// TEST RUN — remove after confirming login works
+(async () => {
+  const sheets = await getSheetsClient();
+  const users = await getUsers(sheets);
+  for (const user of users) {
+    const result = await runForUser(user);
+    await logResult(sheets, result);
+  }
+})();
