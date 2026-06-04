@@ -322,11 +322,3 @@ schedule.scheduleJob('0 30 18 * * *', async () => {
 });
 
 // TEST RUN — remove after confirming login works
-(async () => {
-  const sheets = await getSheetsClient();
-  const users = await getUsers(sheets);
-  for (const user of users) {
-    const result = await runForUser(user);
-    await logResult(sheets, result);
-  }
-})();
